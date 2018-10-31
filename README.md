@@ -4,7 +4,8 @@ HELLua has a compiler, written in pure Lua, that allows you to use macros in you
 
 HELLua compiler does not use functions, that are specific to version of interpreter. However, there are libraries (for example HELLua_ClassAPI), that use functions specific to `Lua 5.1` (such as `setfenv` and `getfenv`).
 
-![It also has a logo: ](https://cdn.discordapp.com/emojis/490042668018040832.png?v=1)
+It also has a logo:
+![](https://cdn.discordapp.com/emojis/490042668018040832.png?v=1)
 
 # HELLua Official Libraries
 HELLua has a several official libraries, that can (or must) be used in HELLua projects.
