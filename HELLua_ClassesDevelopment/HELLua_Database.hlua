@@ -1,0 +1,299 @@
+--[[
+    HELLua Database Development module.
+    Copyright (c) Hunter200165, 2018.
+    All rights reserved under MIT license.
+]]
+
+-- Pascal mode is for better programming experience.
+--${Mode_Pascal +}
+
+uses 
+    HELLua_API as HL, 
+    HELLua_ClassAPI as HLC,
+    HELLua_ClassesLib as HLCL,
+    HELLua_TableUtils as HTableUtils,
+    HELLua_StringUtils as HStrUtils;
+
+local Database := {};
+
+with HLC.Class do 
+
+    with Database do 
+
+        EDatabaseException := class EDatabaseException inherits from TFormattedException do end;
+
+        local HLCL := HLCL;
+
+        TDatabase := 
+            class TDatabase inherits from TObject do 
+                protected field FFileName;
+                public property FileName read FFileName;
+                protected field InstancePointer;
+
+                -- Callbacks!
+                protected field FOnLoaded;
+                protected field FOnCreated;
+                protected field FOnError;
+                protected field FOnResolved;
+                protected field FOnPOST;
+                protected field FOnGET;
+
+                public property OnLoaded read FOnLoaded write FOnLoaded;
+                public property OnError read FOnError write FOnError;
+                public property OnResolved read FOnResolved write FOnResolved;
+                public property OnPOST read FOnPOST write FOnPOST;
+                public property OnGET read FOnGET write FOnGET;
+
+                protected field FAllowGetCallback, default false;
+                protected field FAllowPostCallback, default false;
+                protected field FAllowResolvedCallback, default false;
+                protected field FAllowLoadedCallback, default false;
+                protected field FAllowCreatedCallback, default false;
+
+                protected field FWriteOnFlight;
+                public property WriteOnFlight read FWriteOnFlight write FWriteOnFlight;
+
+                public property AllowGETCallback read FAllowGetCallback write FAllowGetCallback;
+                public property AllowPOSTCallback read FAllowPostCallback write FAllowPostCallback;
+                public property AllowResolvedCallback read FAllowResolvedCallback write FAllowResolvedCallback;
+                public property AllowLoadedCallback read FAllowLoadedCallback write FAllowLoadedCallback;
+                public property AllowCreatedCallback read FAllowCreatedCallback write FAllowCreatedCallback;
+
+                -- Internal methods
+
+                protected method CheckOpened;
+                protected method CheckLocked;
+
+                protected field FLoadedDatabase;
+
+                protected field FLoaded, default false;
+                protected field FLocked, default false;
+                protected field FCached;
+
+                -- Preserved methods --
+
+                protected field ErrorF;
+                protected field DoFileF;
+                protected field TableRemoveF;
+                protected field TableConcatF;
+                protected field type;
+
+                protected field Classes, default HLCL;
+                protected field TableUtils, default HTableUtils;
+                protected field StrUtils, default HStrUtils;
+
+                protected method error;
+
+                -----------------------
+
+                protected method LockDB;
+                protected method UnlockDB;
+
+                public method Load;
+                public method Reload;
+                public method Unload;
+                public method Save;
+                public method Close;
+
+                public method NewTable;
+
+                public constructor Create;
+                public constructor New, linked with Create;
+
+                -- Scope
+
+                public method ResolveScope;
+                public method ResolveScopedField;
+
+                -- Transactions
+
+                public method GET;
+                public method POST;
+                public method GetOrPost;
+
+            implementation 
+
+                ErrorF := _G.error;
+                DoFileF := dofile;
+                TableRemoveF := table.remove;
+                TableConcatF := table.concat;
+                type := RawType;
+
+                function error(...)
+                    FOnError.RaiseEvents(InstancePointer, ...);
+                    ErrorF(new EDatabaseException(...));
+                end;
+
+                function CheckOpened(Inver)
+                    if not FLoaded and not Inver then raise 'Trying to work with non initialized database.'; end;
+                    if FLoaded and Inver then raise 'Trying to request dangerous action on working database.'; end;
+                end;
+
+                function CheckLocked()
+                    if FLocked then raise 'Requested operation violates locked database bindings.'; end;
+                end;
+
+                function Load()
+                    CheckOpened(true);
+                    CheckLocked();
+                    FLoadedDatabase := DoFileF(FFileName);
+                    if FLoadedDatabase is not Table then 
+                        raise 'Database file has invalid data format.';
+                    end;
+                    FLoaded := true;
+                    if FAllowLoadedCallback then FOnLoaded.RaiseEvents(InstancePointer); end;
+                end;
+
+                function Close(NUnload)
+                    CheckLocked(); 
+                    Unload();
+                end;
+
+                function LockDB()
+                    CheckLocked();
+                    FLocked := true;
+                end;
+
+                function Unload()
+                    CheckOpened();
+                    CheckLocked();
+                    FLoadedDatabase := nil;
+                    FLoaded := false;
+                    UnlockDB();
+                end;
+
+                function NewTable()
+                    FLoadedDatabase := {};
+                    FLoaded := true;
+                end;
+
+                function Reload(SaveDB)
+                    CheckOpened(true);
+                    CheckLocked();
+                    if SaveDB then Save(); end;
+                    Load();    
+                end;
+
+                function UnlockDB()
+                    FLocked := false;
+                end;
+
+                function Save()
+                    CheckOpened();
+                    LockDB();
+                    try
+                        local File := new Classes.TFile(FFileName, Classes.fmOpenWrite);
+                        File.Write('return ', TableUtils.SerializeTable(FLoadedDatabase, 2, '\n'));
+                        File.Close();
+                    finally do 
+                        UnlockDB();
+                    end;
+                end;
+
+                -- Scopes
+
+                function ResolveScope(Str, CreateF)
+                    CheckOpened();
+                    if not (Str is String) then raise 'Scope must be string'; end;
+                    local Result := StrUtils.SplitFormatted(Str, '%.+');
+                    local Return := nil;
+                    local Previo := FLoadedDatabase;
+                    if #Result = 0 then raise 'Empty scope is provided.'; end;
+                    for i := 1 to #Result do 
+                        -- local Name := Result[i - 1];
+                        local NameNow := Result[i];
+                        -- Previo := Previo[Name];
+                        Return := Previo[NameNow];
+                        if not (Return is Table) then
+                            if CreateF and (Return = nil) then 
+                                Previo[NameNow] := {};
+                                Return := Previo[NameNow];
+                            else 
+                                raise 'Cannot overwrite field to create scope.';
+                            end;
+                        end; 
+                        Previo := Return;
+                    end;
+                    if FAllowResolvedCallback then FOnResolved.RaiseEvents(InstancePointer, Str, NCreateF, Return); end;
+                    return Return;
+                end;
+
+                function ResolveScopedField(Str, CreateF)
+                    local ResultArr := StrUtils.SplitFormatted(Str, '%.+');
+                    local FieldName := ResultArr[#ResultArr];
+                    -- print(FieldName);
+                    TableRemoveF(ResultArr, #ResultArr);
+                    local Scope := nil;
+                    if #ResultArr > 0 then 
+                        Scope := ResolveScope( TableConcatF(ResultArr, '.'), CreateF );
+                    else
+                        Scope := FLoadedDatabase;
+                    end;
+                    return Scope[FieldName];
+                end;
+
+                function GET(Str, NCreateF)
+                    CheckOpened();
+                    if FAllowGetCallback then FOnGET.RaiseEvents(InstancePointer, Str, NCreateF); end;
+                    return ResolveScopedField(Str, not NCreateF);
+                end;
+
+                function POST(Str, Value, NCreateF)
+                    CheckOpened();
+                    LockDB();
+                    -- print('POST!');
+                    try
+                        if FAllowPostCallback then FOnPOST.RaiseEvents(InstancePointer, Str, Value, NCreateF); end;
+                        local ResultArr := StrUtils.SplitFormatted(Str, '%.+');
+                        local FieldName := ResultArr[#ResultArr];
+                        TableRemoveF(ResultArr, #ResultArr);
+                        local Scope := nil;
+                        if #ResultArr > 0 then 
+                            Scope := ResolveScope(TableConcatF(ResultArr, '.'), not NCreateF);
+                        else
+                            Scope := FLoadedDatabase;
+                        end;
+                        Scope[FieldName] := Value;
+                    finally do
+                        UnlockDB(); 
+                    end;
+                    if FWriteOnFlight then 
+                        -- print('SAVING!');
+                        Save();
+                    end;
+                end;
+
+                function GetOrPost(Str, DefaultValue, NCreateF)
+                    -- print('GET OR POST RAISED');
+                    local GOT := GET(Str, NCreateF);
+                    if GOT = nil then 
+                        POST(Str, DefaultValue, NCreateF);
+                        return DefaultValue;
+                    end;
+                    return GOT;
+                end;
+
+                -- Constructor
+
+                function Create(FileNameS)
+                    if not (FileNameS is String) then raise 'File name must be string.'; end;
+                    FFileName := FileNameS;
+                    InstancePointer := LinkedInstance;
+                    -- print(TableUtils);
+
+                    FOnError := new Classes.TCallback();
+                    FOnCreated := new Classes.TCallback();
+                    FOnGET := new Classes.TCallback();
+                    FOnLoaded := new Classes.TCallback();
+                    FOnPOST := new Classes.TCallback();
+                    FOnResolved := new Classes.TCallback();
+                end;
+
+                -- End of class TDatabase
+            end;
+
+    end;
+
+end;
+
+return Database;
