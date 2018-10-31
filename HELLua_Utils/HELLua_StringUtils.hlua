@@ -1,0 +1,144 @@
+--[[
+    HELLua module: String Utils.
+    Copyright (c) Hunter200165, 2018.
+    All rights reserved under MIT license.
+]]
+
+local StrUtils = {};
+
+uses 
+    HELLua_API as HL;
+
+local AddHelpers = true;
+
+with _G do 
+
+    String = string;
+
+    with StrUtils do 
+
+        FormatChars = { '%', '(', ')', '{', '}', '[', ']', '$', '^', '*', '+', '.', '-', '?' };
+
+        function FixFormatString(Str, Ignore)
+            self Ignore is Table otherwise {};
+            for i = 1 to #FormatChars do 
+                local Check = false;
+                local Char = FormatChars[i];
+                for k = 1 to #Ignore do 
+                    if Char == Ignore[k] then 
+                        Check = true;
+                        break;
+                    end;
+                end;
+                if not Check then  
+                    Str = Str:gsub('%' + Char, '%%%' + Char);
+                end; 
+            end;
+            return Str;
+        end;
+
+        function Split(Str, Delimiter)
+            Str += Delimiter;
+            Delimiter = FixFormatString(Delimiter);
+            local Result = {};
+            local Mask = '(.-)' + Delimiter;
+            local PS, PF, SS = Str:find(Mask);
+            while PS != nil do 
+                table.insert(Result, SS);
+                PS, PF, SS = Str:find(Mask, PF + 1);
+            end; 
+            return Result;
+        end;
+
+        function SplitFormatted(Str, DelimiterPattern, Maximum)
+            self Maximum is Number otherwise (-1);
+            local Result = {};
+            local Mask = '(.-)' + DelimiterPattern;
+            local LastF = 0;
+            local Count = 0;
+            local PS, PF, SS = Str:find(Mask);
+            while (PS != nil) do 
+                Count += 1;
+                table.insert(Result, SS);
+                LastF = PF;
+                if (Maximum >= 0) and (Count >= Maximum) then break; end;
+                PS, PF, SS = Str:find(Mask, PF + 1);
+            end;
+            table.insert( Result, Str:sub( LastF + 1, -1 ) );
+            return Result;
+        end;
+
+        function TrimLeft(Str, Chars)
+            if Chars is String then 
+                Chars = FixFormatString(Chars);
+            else
+                Chars = '%s'; 
+            end;
+            Chars = ('^[%s]+'):format(Chars);
+            return ({Str:gsub(Chars, '')})[1];
+        end;
+
+        function TrimLeftFormatted(Str, Chars)
+            if Chars is not String then 
+                Chars = '[%s]+';
+            end;
+            Chars = '^' + Chars;
+            return ({Str:gsub(Chars, '')})[1];
+        end;
+
+        function TrimRight(Str, Chars)
+            if Chars is String then 
+                Chars = FixFormatString(Chars);
+            else 
+                Chars = '%s';
+            end;
+            Chars = ('[%s]+$'):format(Chars);
+            return ({Str:gsub(Chars, '')})[1];
+        end;
+
+        function TrimRightFormatted(Str, Chars)
+            if Chars is not String then 
+                Chars = '[%s]+';
+            end;
+            Chars += '$';
+            return ({Str:gsub(Chars, '')})[1];
+        end;
+
+        function Trim(Str, Chars)
+            return TrimLeft(TrimRight(Str, Chars), Chars);
+        end;
+
+        function TrimFormatted(Str, Chars)
+            return TrimLeftFormatted( TrimRightFormatted(Str, Chars), Chars );
+        end;
+
+        function Strip(Str, PS, PF)
+            if not ((PS is Number) and (PF is Number)) then raise 'Start and finish positions should be a number.'; end;
+            local Result = {
+                Str:sub(1, PS - 1);
+                Str:sub(PF + 1);
+            };
+            return table.concat(Result, '');
+        end;
+
+        function Insert(Str, SubStr, PosS, PosF)
+            if not ((PosF is Number) and (PosS is Number)) then raise 'Start and finish positions should be a number.'; end;
+            local Result = {
+                Str:sub(1, PosS - 1);
+                SubStr;
+                Str:sub(PosF + 1);
+            };
+            return table.concat(Result, '');
+        end;
+
+    end;
+
+end;
+
+if AddHelpers then 
+    for k,v in pairs(StrUtils) do 
+        if (v is Function) then String[k] = v; end;
+    end;
+end;
+
+return StrUtils;

@@ -1,0 +1,90 @@
+--[[
+    Table utils module.
+    Copyright (c) Hunter200165, 2018.
+    All rights reserved under MIT license.
+]]
+
+--${Mode_Pascal +}
+
+uses 
+    HELLua_API as HL,
+    HELLua_MiscsAPI as Misc;
+
+local TableUtils := {};
+
+local type := type;
+local tostring := tostring; 
+
+with TableUtils do 
+
+    function StripValue(Arr, Value)
+        for k,v in pairs(Arr) do 
+            if (v = Value) then 
+                Arr[k] := nil;
+            end;
+        end;
+        return Arr;
+    end;
+
+    function StripKeyFormatted(Arr, Value)
+        for k,v in pairs(Arr) do
+            if (k is String) and (k:match(Value)) then 
+                Arr[k] := nil;
+            end;
+        end;
+        return Arr; 
+    end;
+
+    function StripValueFormatted(Arr, Value)
+        for k,v in pairs(Arr) do 
+            if (v is String) and (v:match(Value)) then 
+                Arr[k] := nil;
+            end;
+        end;
+        return Arr;
+    end;
+
+    function RepackNumericArray(Arr, Counter)
+        local Result := {};
+        self Counter is Number otherwise 1;
+        for k,v in pairs(Arr) do 
+            if k is Number then 
+                Result[Counter] := v;
+                Counter += 1;
+            else
+                Result[k] := v; 
+            end;
+        end;
+        return Result;
+    end;
+
+    function SerializeTable(Table, Tab, Glue, Offset, List)
+        self Tab is Number otherwise 2;
+        self Offset is Number otherwise 0;
+        self Glue is String otherwise '\n';
+        self List is Table otherwise {};
+        local Result := {};
+        local Insert := table.insert;
+        Insert(Result, '{');
+        TabFul := (' '):rep(Offset + Tab);
+        List[Table] := true;
+        for k,v in pairs(Table) do 
+            local Str := '%s[%s] = %s;';
+            local Type := typeof v;
+            local KS := Misc.ValueToString(k);
+            local KV := nil;
+            if Type == 'table' then 
+                KV := SerializeTable(v, Tab, Glue, Offset + Tab, List);
+            else
+                KV := Misc.ValueToString(v); 
+            end;
+            Insert(Result, Str:format(TabFul, KS, KV));
+        end;
+        TabFul := (' '):rep(Offset);
+        Insert(Result, ('%s}'):format(TabFul));
+        return table.concat(Result, Glue);
+    end;
+
+end;
+
+return TableUtils;

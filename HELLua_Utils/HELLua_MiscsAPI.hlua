@@ -1,0 +1,35 @@
+--[[
+    Miscs API for HELLua.
+    Copyright (c) Hunter200165, 2018.
+    All rights reserved under MIT license.
+]]
+
+--${Mode_Pascal +}
+
+uses 
+    HELLua_API as HL;
+
+local Miscs := {};
+
+local type := type;
+local tostring := tostring;
+local tonumber := tonumber;
+
+with Miscs do 
+
+    function ValueToString(Val)
+        local Type := typeof Val;
+        if (Type = 'number') then 
+            return Val as String;
+        elseif (Type = 'boolean') then 
+            return Val as String;
+        elseif (Type = 'string') then 
+            return ('%q'):format(Val);
+        else
+            raise ('Unsupported type of value: %s'):format(Type);
+        end;
+    end;
+
+end;
+
+return Miscs;

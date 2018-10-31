@@ -1,0 +1,114 @@
+--[[
+    HELLua File system module.
+    Copyright (c) Hunter200165, 2018
+]]
+
+local FileSystem = {};
+
+uses 
+    HELLua_API as HL,
+    HELLua_StringUtils as StringUtils;
+
+local String = String;
+local type = type;
+local tostring = tostring;
+
+with FileSystem do 
+
+    local TDelete = table.remove;
+    local TInsert = table.insert;
+    local OSExecute = os.execute;
+
+    function SetOS(Str)
+        Str = Str:lower();
+        if Str == 'windows' then 
+            FileSystem.Windows = true;
+            FileSystem.Linux = false;
+        elseif Str == 'linux' then 
+            FileSystem.Windows = false;
+            FileSystem.Linux = true;
+        else
+            raise ('Unknown operation system provided: %s'):format(Str as String); 
+        end;
+        FileSystem.OS = Str;
+    end;
+
+    function SplitPath(path)
+        local Result = path:SplitFormatted('[/\\]+');
+        while (Result[1] == '') do TDelete(Result, 1); end; 
+        while (Result[#Result] == '') do TDelete(Result, 1); end;
+        return Result;
+    end;
+
+    function Execute(cmd)
+        if Windows then 
+            local Arr = {OSExecute(('%s > NUL'):format(cmd))};
+            for i = 1 to #Arr do if (Arr[i] is Number) then return Arr[i]; end; end;
+            return -1;
+        elseif Linux then 
+            local Arr = {OSExecute(('%s > /dev/null'):format(cmd))};
+            for i = 1 to #Arr do if (Arr[i] is Number) then return Arr[i]; end; end;
+            return -1;
+        end;
+    end;
+
+    function CreateFolder(Folder)
+        if (Windows or Linux) then 
+            local Result = Execute(('mkdir %s'):format(Folder as String));
+            if Result != 0 then return false; end;
+            return true;
+        end;
+        return false;
+    end;
+
+    function DoDir(Folder)
+        -- If DoDir returns true, then directory exists.
+        if Windows then 
+            local Result = Execute(('dir %s'):format(Folder));
+            if Result != 0 then return false; end;
+            return true;
+        elseif Linux then
+            local Result = Execute(('ls %s'):format(Folder)); 
+            if Result != 0 then return false; end;
+            return true;
+        end;
+        return false;
+    end;
+
+    function CD(Folder)
+        if Windows or Linux then 
+            local Result = Execute(('cd %s'):format(Folder));
+            if Result != 0 then return false; end;
+            return true;
+        end;
+    end;
+
+    function DirectoryExists(Folder)
+        return DoDir(Folder);
+    end;
+
+    function CheckOrCreateDir(Folder)
+        if not DirectoryExists(Folder) then 
+            if not CreateFolder(Folder) then 
+                return false;
+            end;
+        end;
+        return true;
+    end;
+
+    function CheckOrCreateDirs(Folders)
+        local Paths = Folders:SplitFormatted('[/\\]+');
+        local Str = '';
+        for i = 1 to #Paths do 
+            Str += (Paths[i] + '\\');
+            if not CheckOrCreateDir(Str) then return false, Str; end;
+        end;
+        return true;
+    end;
+
+    -- Default OS can be changed.
+    SetOS('windows');
+
+end;
+
+return FileSystem;
