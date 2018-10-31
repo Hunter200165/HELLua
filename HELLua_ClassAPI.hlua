@@ -1,0 +1,817 @@
+-- HELLua class API
+
+--${CHECKS -}
+
+uses 
+	HELLua_API as HL;
+	
+local HELLua_Class = {};
+
+ErrorMask = '[HELLua_ClassAPI][Error]: %s';
+	
+Errors = {
+	EUnexpectedType = ErrorMask:format 'Unexpected type %s. Expected: %s';
+	EPropertyIsUnreachable = ErrorMask:format 'Property needs to have either "Read" or "Write" field.';
+	ENameIsInvalid = ErrorMask:format 'Provided name is invalid or has invalid type.';
+	ENameDuplication = ErrorMask:format 'Name "%s" is duplicating in class definition.';
+	EUnknownType = ErrorMask:format 'Unknown type is provided: %s';
+	EPropertySetterIsInvalid = ErrorMask:format 'Property setter is invalid: %s';
+	EPropertyGetterIsInvalid = ErrorMask:format 'Property getter is invalid: %s';
+	EImplementedMethodIsNotDefined = ErrorMask:format 'Method "%s" is implemented, but has no definition.';
+	EMethodDefinedIsNotImplemented = ErrorMask:format 'Method "%s" is defined, but has no implementation.';
+	EUnknownVisibility = ErrorMask:format 'Unknown visibility value is provided: %s';
+	EUndefinedFieldAccess = ErrorMask:format 'Trying to access undefined field: %s';
+	ECannotReadWriteOnlyProperty = ErrorMask:format 'Cannot read write-only property: %s';
+	ECannotWriteReadOnlyProperty = ErrorMask:format 'Cannot write read-only property: %s';
+	EPropertyHasInvalidGetter = ErrorMask:format 'Property "%s" has invalid or corrupted getter "%s"';
+	EPropertyHasInvalidSetter = ErrorMask:format 'Property "%s" has invalid or corrupted setter "%s"';
+	ECannotAssignValueToMethod = ErrorMask:format 'Cannot assing value to method field "%s"';
+	EConstructorCannotBeStatic = ErrorMask:format 'Constructor method "%s" cannot be static.';
+	EConstructorCannotBePrivate = ErrorMask:format 'Constructor method "%s" cannot be private.';
+	EParentClassIsNotDefined = ErrorMask:format 'Parent class is not defined: %s';
+	EClassNameDuplication = ErrorMask:format 'Class name is duplicating: %s';
+	EMethodIsNotInherited = ErrorMask:format 'Method "%s" is not inherited.';
+	EMethodTypeIsViolated = ErrorMask:format 'Method type of "%s" is violated. Expected function, but got: %s';
+	EPropertyImplementationIsNotAllowed = ErrorMask:format 'Property assignation is not allowed under implementation field.';
+	EImplementedFieldHasNoDefinition = ErrorMask:format 'Field "%s" is assigned to value, but has no explicit implementation.';
+	ENoConstructorsAreDefined = ErrorMask:format 'Class has no available constructors.';
+	ELinkedMethodHasNoEndLink = ErrorMask:format 'Method "%s" has a link, but redirection to "%s" was failed.';
+	ELinkedMethodCannotHaveImplementation = ErrorMask:format 'Linked method "%s" cannot be implemented.';
+	ELinkedMethodHasInvalidDefinition = ErrorMask:format 'Linked method "%s" differs from initial method "%s".';
+	ELinkedMethodLinkingPointer = ErrorMask:format 'Linked method "%s" is pointing to linked method "%s".';
+	EStaticMethodCannotBeVirtual = ErrorMask:format 'Static method "%s" cannot be virtual.';
+	EConstantFieldMustHaveValue = ErrorMask:format 'Constant field "%s" must have a value.';
+	EVirtualMethodCannotBeEnclosed = ErrorMask:format 'Virtual method "%s" cannot be enclosed.';
+	EAbstractMethodMustBeVirtual = ErrorMask:format 'Abstract method "%s" must be virtual.';
+	EConstructorCannotBeAbstract = ErrorMask:format 'Constructor "%s" cannot be abstract.';
+	EConstructorCannotBeEnclosed = ErrorMask:format 'Constructor "%s" cannot be enclosed.';
+	EPartTypeCannotBeOverriden = ErrorMask:format 'Part "%s" cannot change type from "%s" to "%s".';
+	EEnclosedPartCannotBeOverriden = ErrorMask:format 'Enclosed part "%s" cannot be overriden.';
+	EPropertyCannotWriteToConstantField = ErrorMask:format 'Property "%s" cannot write to constant field "%s".';
+	ECannotChangeConstantField = ErrorMask:format 'Cannot change constant field "%s".';
+	EAbstractError = ErrorMask:format 'Trying to call abstract method "%s" which has no implementation.';
+	ENativePropertyMustBeIndexed = ErrorMask:format 'Native property "%s" must be indexed.';
+	ENativePropertyCanBeOnlyOne = ErrorMask:format 'Native property "%s" cannot change primary native property "%s".';
+	EIndexedPropertyCannotBeAssigned = ErrorMask:format 'Indexed property "%s" cannot be assigned.';
+	EOperatorCannotBeModified = ErrorMask:format 'Operator "%s" cannot have other modifiers.';
+	EOperatorMustBeStatic = ErrorMask:format 'Operator "%s" must be static.';
+	EOperatorMustBePublic = ErrorMask:format 'Operator "%s" must be public.';
+};
+
+Visibility_Public  = 0;
+Visibility_Private = 1;
+
+Type_Field = 0;
+Type_Property = 1;
+Type_Method = 2;
+
+ClassesTree = {};
+
+local type = type;
+local tostring = tostring;
+local tonumber = tonumber;
+
+local function ConstructClass(Fields, Properties, Methods, Envir, RawClass)
+ 
+	Fields = HL.DeepCopy(Fields);
+	Properties = HL.DeepCopy(Properties);
+	Methods = HL.DeepCopy(Methods);
+
+	Fields = HELLua_Class.Class.ArrayToTable(Fields, 'Name');
+	Properties = HELLua_Class.Class.ArrayToTable(Properties, 'Name');
+	Methods = HELLua_Class.Class.ArrayToTable(Methods, 'Name');
+
+	if not Inert then for k,v in pairs(Methods) do if (not (v.Abstract or v.Static)) and (v.Function is Function) then 
+		v.Function = HL.CopyFunction(v.Function);
+	end; end; end;
+	
+	local PublicScope = {};
+	local PrivateScope = {};
+	local Operators = {};
+
+	local TpmList = {Fields, Properties, Methods};
+	for _, TableP in pairs(TpmList) do 
+		for k,v in pairs(TableP) do 
+			PrivateScope[k] = v;
+			if v.Visibility != Visibility_Private then PublicScope[k] = v; end;
+			if (v.Type == Type_Method) and (v.Operator) then Operators[k] = v; end;
+		end;
+	end;
+
+	local function PropertyGetter(PropObj)
+		local Read = PropObj.Read;
+		local Objecto = PrivateScope[Read];
+		if (Objecto == nil) then raise Errors.ECannotReadWriteOnlyProperty:format(PropObj.Name as String); end;
+		if (Objecto.Type == Type_Property) then raise Errors.EPropertyGetterIsInvalid:format(Read as String); end;
+		if Objecto.Type == Type_Field then 
+			return Objecto.Content;
+		elseif Objecto.Type == Type_Method then 
+			if Objecto.Abstract then raise Errors.EAbstractError:format(Read as String); end;
+			return Objecto.Function();
+		else 
+			raise Errors.EUnknownType:format(Objecto.Type as String);
+		end;
+	end;
+
+	local function PropertySetter(PropObj, Value)
+		local Write = PropObj.Write;
+		local Objecto = PrivateScope[Write];
+		if (Objecto == nil) then raise Errors.ECannotWriteReadOnlyProperty:format(PropObj.Name as String); end;
+		if (Objecto.Type == Type_Property) then raise Errors.EPropertySetterIsInvalid:format(Write as String); end;
+		if Objecto.Type == Type_Field then 
+			if Objecto.Constant then raise Errors.ECannotChangeConstantField:format(Write as String); end;
+			Objecto.Content = Value;
+		elseif Objecto.Type == Type_Method then 
+			if Objecto.Abstract then raise Errors.EAbstractError:format(Write as String); end;
+			Objecto.Function(Value);
+		else 
+			raise Errors.EUnknownType:format(Objecto.Type as String);
+		end;
+	end;
+
+	local PrevObject = { 
+		Fields = Fields; 
+		Properties = Properties; 
+		Methods = Methods; 
+		PublicScope = PublicScope; 
+		PrivateScope = PrivateScope;
+	};
+
+	local InnerEnvMeta = {};
+	local InnerEnvMetas, OldInnerEnv = Envir.InnerEnvMeta, Envir.OldInnerEnv;
+
+	local InIndexFunction = InnerEnvMetas.__index;
+	local InNewIndexFunction = InnerEnvMetas.__newindex;
+
+	InnerEnvMeta.__index = function(self, index)
+		local Objecto = PrivateScope[index];
+		if Objecto == nil then return InIndexFunction(self, index); end;
+		if Objecto.Type == Type_Field then 
+			return Objecto.Content;
+		elseif Objecto.Type == Type_Method then 
+			if Objecto.Abstract then raise Errors.EAbstractError:format(index as String); end;
+			return Objecto.Function;
+		elseif Objecto.Type == Type_Property then 
+			return PropertyGetter(Objecto);
+		else 
+			raise Errors.EUnknownType:format(Objecto.Type as String);
+		end;
+	end;
+
+	InnerEnvMeta.__newindex = function(self, index, Value)
+		local Objecto = PrivateScope[index];
+		if Objecto == nil then return InNewIndexFunction(self, index, Value); end;
+		if Objecto.Type == Type_Field then 
+			if Objecto.Constant then raise Errors.ECannotChangeConstantField:format(index as String); end;
+			Objecto.Content = Value;
+			return true;
+		elseif Objecto.Type == Type_Property then 
+			PropertySetter(Objecto, Value);
+			return true;
+		elseif Objecto.Type == Type_Method then 
+			raise Errors.ECannotAssignValueToMethod:format(index as String);
+		else
+			raise Errors.EUnknownType:format(Objecto.Type as String); 
+		end;
+	end;
+
+	local PublicClassPattern = {};
+	local PrivateClassPattern = {};
+
+	local PublicEnv = {};
+	local PrivateEnv = {};
+
+	PublicEnv.__index = function(self, index) 
+		local Objecto = PublicScope[index];
+		if Objecto == nil then return nil; end;
+		if Objecto.Type == Type_Field then 
+			return Objecto.Content;
+		elseif Objecto.Type == Type_Method then 
+			if Objecto.Abstract then raise Errors.EAbstractError:format(Name as String); end;
+			return Objecto.Function;
+		elseif Objecto.Type == Type_Property then 
+			return PropertyGetter(Objecto);
+		else 
+			raise Errors.EUnknownType:format(Objecto.Type as String);
+		end;
+	end;
+	PublicEnv.__newindex = function(self, index, value) 
+		local Objecto = PublicScope[index];
+		if Objecto == nil then return nil; end;
+		if Objecto.Type == Type_Field then 
+			if Objecto.Constant then raise Errors.ECannotChangeConstantField:format(Name as String); end;
+			Objecto.Content = value;
+			return true;
+		elseif Objecto.Type == Type_Property then 
+			PropertySetter(Objecto, value);
+			return true;
+		elseif Objecto.Type == Type_Method then 
+			raise Errors.ECannotAssignValueToMethod:format(Name as String);
+		else
+			raise Errors.EUnknownType:format(Objecto.Type as String); 
+		end;
+	end;
+
+	if (Operators.OperatorAdd is Table) then PublicEnv.__add = Operators.OperatorAdd.Function; end;
+	if (Operators.OperatorSubtract is Table) then PublicEnv.__sub = Operators.OperatorSubtract.Function; end;
+	if (Operators.OperatorMultiply is Table) then PublicEnv.__mul = Operators.OperatorMultiply.Function; end;
+	if (Operators.OperatorDivide is Table) then PublicEnv.__div = Operators.OperatorDivide.Function; end;
+	if (Operators.OperatorModulo is Table) then PublicEnv.__mod = Operators.OperatorModulo.Function; end;
+	if (Operators.OperatorPower is Table) then PublicEnv.__pow = Operators.OperatorPower.Function; end;
+	if (Operators.OperatorNegate is Table) then PublicEnv.__unm = Operators.OperatorNegate.Function; end;
+	if (Operators.OperatorConcatenate is Table) then PublicEnv.__concat = Operators.OperatorConcatenate.Function; end;
+	if (Operators.OperatorLength is Table) then PublicEnv.__len = Operators.OperatorLength.Function; end;
+	if (Operators.OperatorEquals is Table) then PublicEnv.__eq = Operators.OperatorEquals.Function; end;
+	if (Operators.OperatorLessThan is Table) then PublicEnv.__lt = Operators.OperatorLessThan.Function; end;
+	if (Operators.OperatorLessOrEqualThan is Table) then PublicEnv.__le = Operators.OperatorLessOrEqualThan; end;
+
+	PrivateEnv.__index = function(self, index) 
+		local Objecto = PrivateScope[index];
+		if Objecto == nil then return nil; end;
+		if Objecto.Type == Type_Field then 
+			return Objecto.Content;
+		elseif Objecto.Type == Type_Method then 
+			if Objecto.Abstract then raise Errors.EAbstractError:format(index as String); end;
+			return Objecto.Function;
+		elseif Objecto.Type == Type_Property then 
+			return PropertyGetter(Objecto);
+		else 
+			raise Errors.EUnknownType:format(Objecto.Type as String);
+		end;
+	end;
+	PrivateEnv.__newindex = function(self, index, Value) 
+		local Objecto = PrivateScope[index];
+		if Objecto == nil then return nil; end;
+		if Objecto.Type == Type_Field then 
+			if Objecto.Constant then raise Errors.ECannotChangeConstantField:format(index as String); end;
+			Objecto.Content = Value;
+			return true;
+		elseif Objecto.Type == Type_Property then 
+			PropertySetter(Objecto, Value);
+			return true;
+		elseif Objecto.Type == Type_Method then 
+			raise Errors.ECannotAssignValueToMethod:format(index as String);
+		else
+			raise Errors.EUnknownType:format(Objecto.Type as String); 
+		end;
+	end;
+
+	if (Operators.OperatorAdd is Table) then PrivateEnv.__add = Operators.OperatorAdd.Function; end;
+	if (Operators.OperatorSubtract is Table) then PrivateEnv.__sub = Operators.OperatorSubtract.Function; end;
+	if (Operators.OperatorMultiply is Table) then PrivateEnv.__mul = Operators.OperatorMultiply.Function; end;
+	if (Operators.OperatorDivide is Table) then PrivateEnv.__div = Operators.OperatorDivide.Function; end;
+	if (Operators.OperatorModulo is Table) then PrivateEnv.__mod = Operators.OperatorModulo.Function; end;
+	if (Operators.OperatorPower is Table) then PrivateEnv.__pow = Operators.OperatorPower.Function; end;
+	if (Operators.OperatorNegate is Table) then PrivateEnv.__unm = Operators.OperatorNegate.Function; end;
+	if (Operators.OperatorConcatenate is Table) then PrivateEnv.__concat = Operators.OperatorConcatenate.Function; end;
+	if (Operators.OperatorLength is Table) then PrivateEnv.__len = Operators.OperatorLength.Function; end;
+	if (Operators.OperatorEquals is Table) then PrivateEnv.__eq = Operators.OperatorEquals.Function; end;
+	if (Operators.OperatorLessThan is Table) then PrivateEnv.__lt = Operators.OperatorLessThan.Function; end;
+	if (Operators.OperatorLessOrEqualThan is Table) then PrivateEnv.__le = Operators.OperatorLessOrEqualThan; end;
+
+	PublicClassPattern = setmetatable(PublicClassPattern, PublicEnv);
+	PrivateClassPattern = setmetatable(PrivateClassPattern, PrivateEnv);
+
+	for k,v in pairs(Methods) do 
+		if not (v.Abstract or v.Static) then 
+			local Env = {};
+			Env.self = PrivateClassPattern;
+			Env.this = PrivateClassPattern;
+			Env.LinkedInstance = PublicClassPattern;
+			Env.__OldENV = OldInnerEnv;
+			Env.____selfPointerToMethod = v;
+			Env.____selfOwnerBaseClass = v.Owner;
+			Env.____selfTopClass = RawClass;
+			Env.Inherited = Inherited;
+			v.Function = setfenv(v.Function, setmetatable(Env, InnerEnvMeta));
+		end;
+	end;
+
+	return 
+		PublicClassPattern, 
+		PrivateClassPattern,
+		InnerEnvMeta, 
+		OldInnerEnv;
+
+end;
+
+local function ClassConstructionMethod(__fields, __properties, __methods, Envir, RawClass)
+
+	local __fields = HL.DeepCopy(__fields);
+	local __properties = HL.DeepCopy(__properties);
+	local __methods = HL.DeepCopy(__methods);
+
+	for i = 1 to #__fields do 
+		__fields[__fields[i].Name] = __fields[i];
+		__fields[i] = nil;
+	end;
+
+	for i = 1 to #__properties do 
+		__properties[__properties[i].Name] = __properties[i];
+		__properties[i] = nil;
+	end;
+
+	for i = 1 to #__methods do 
+		__methods[__methods[i].Name] = __methods[i];
+		__methods[i] = nil;
+	end;
+	
+	local PublicClassPattern, PrivateClassPattern, InnerEnvMeta, OldInnerEnv = ConstructClass(__fields, __properties, __methods, Envir, RawClass);
+
+	return PublicClassPattern;
+end;
+
+HELLua_Class.Class = {};
+
+function HELLua_Class.Class.CreateClass(classCast, nameOfClass, parentClass)
+		
+	if (nameOfClass is not String) then 
+		raise Errors.ENameIsInvalid;
+	end;
+
+	if (nameOfClass != 'TObject') and (parentClass == nil) then 
+		parentClass = 'TObject';
+	end;
+
+	if (ClassesTree[nameOfClass] != nil) then 
+		raise Errors.EClassNameDuplication:format(nameOfClass as String);
+	end;
+
+	local ParentedTable = {};
+	local InheritedFrom = false;
+	if (parentClass is String) then 
+		if (ClassesTree[parentClass] != nil) then 
+			InheritedFrom = true;
+			ParentedTable = ClassesTree[parentClass];
+		else 
+			raise Errors.EParentClassIsNotDefined:format(parentClass);
+		end;
+	end;
+
+	local ParentFields = (ParentedTable.__fields is Table) and (ParentedTable.__fields) or {};
+	local ParentMethods = (ParentedTable.__methods is Table) and ParentedTable.__methods or {};
+	local ParentProperties = (ParentedTable.__properties is Table) and ParentedTable.__properties or {};
+
+	local function ExistsFunction(Name, List)
+		local Result, Index, Obj = false, -1, nil;
+		for i = 1 to #List do 
+			if List[i].Name == Name then 
+				Result, Index, Obj = true, i, List[i];
+				break;
+			end;
+		end;
+		return Result, Index, Obj;
+	end;
+
+	local function PartExistsFunction(Name, Lists, Names)
+		for i = 1 to #Lists do 
+			local Exists, Index, Obj = Lists[i](Name);
+			if Exists then return Exists, Index, Names[i], Obj; end;
+		end;
+		return false, -1, nil, nil;
+	end;
+
+	local __properties = {};
+	local __fields = {};
+	local __methods = {};
+	
+	local function FieldExists(Name) return ExistsFunction(Name, __fields); end;
+	local function PropertyExists(Name) return ExistsFunction(Name, __properties); end;
+	local function MethodExists(Name) return ExistsFunction(Name, __methods); end;
+
+	local function PartExists(Name)
+		return PartExistsFunction(Name, {FieldExists, PropertyExists, MethodExists}, {Type_Field, Type_Property, Type_Method});
+	end;
+	
+	local function PartExistsWithoutMethod(Name)
+		return PartExistsFunction(Name, {FieldExists, PropertyExists}, {Type_Field, Type_Property});
+	end;
+	
+	local function PartExistsWithoutProperty(Name)
+		return PartExistsFunction(Name, {FieldExists, MethodExists}, {Type_Field, Type_Method});
+	end;
+
+	local function ParentFieldExists(Name) return ExistsFunction(Name, ParentFields); end;
+	local function ParentMethodExists(Name) return ExistsFunction(Name, ParentMethods); end;
+	local function ParentPropertyExists(Name) return ExistsFunction(Name, ParentProperties); end;
+	local function ParentPartExists(Name) 
+		return PartExistsFunction(Name, {ParentFieldExists, ParentPropertyExists, ParentMethodExists}, {Type_Field, Type_Property, Type_Method});
+	end;
+	local function ParentPartExistsWithoutProperty(Name)
+		return PartExistsFunction(Name, {ParentFieldExists, ParentMethodExists}, {Type_Field, Type_Method});
+	end;
+
+	local Native, NativeObj = false, nil;
+
+	-- All scopes are enumerable.
+	for i = 1 to #classCast do 
+		local Scope = classCast[i];
+		if (Scope is not table) then raise Errors.EUnexpectedType:format(typeof Scope, 'table'); end;
+		for k = 1 to #Scope do 
+			local Obj = Scope[k];
+			if PartExists(Obj.Name) then 
+				raise Errors.ENameDuplication:format(Obj.Name as String);
+			end;
+			local ParentExists, ParentIndex, ParentType, PObj = ParentPartExists(Obj.Name);
+			if (ParentExists) and (Obj.Type != ParentType) then
+				raise Errors.EPartTypeCannotBeOverriden:format(Obj.Name as String, ParentType as String, Obj.Type as String);
+			end;
+			if (ParentExists) and (PObj.Enclosed) then 
+				raise Errors.EEnclosedPartCannotBeOverriden:format(Obj.Name as String);
+			end;
+			if Obj.Type == Type_Field then 
+				table.insert(__fields, Obj);
+			elseif Obj.Type == Type_Property then	
+				local Write = Obj.Write;
+				local Read = Obj.Read;
+				if (Write is String) then 
+					local Ex, ID, Type, PObj = PartExistsWithoutProperty(Write);
+					if not Ex then 
+						Ex, ID, Type, PObj = ParentPartExistsWithoutProperty(Write);
+						if not Ex then 
+							raise Errors.EPropertySetterIsInvalid:format(Write as String); 
+						elseif (Type == Type_Field) and (PObj.Constant) then 
+							raise Errors.EPropertyCannotWriteToConstantField:format(Obj.Name as String, PObj.Name as String);
+						end;
+					elseif (Type == Type_Field) and (PObj.Constant) then
+						raise Errors.EPropertyCannotWriteToConstantField:format(Obj.Name as String, PObj.Name as String);
+					end;
+					if (Obj.Native) then 
+						if Native then 
+							raise Errors.ENativePropertyCanBeOnlyOne:format(Obj.Name as String, NativeObj.Name as String);
+						end;
+						NativeObj = Obj;
+						Native = true;
+					end;
+				end;
+				if (Read is String) then 
+					local Ex, ID, Type = PartExistsWithoutProperty(Read);
+					if not Ex then 
+						local Ex, ID, Type = ParentPartExistsWithoutProperty(Read);
+						if not Ex then 
+							raise Errors.EPropertyGetterIsInvalid:format(Read as String); 
+						end;
+					end;
+				end;
+				table.insert(__properties, Obj);
+			elseif Obj.Type == Type_Method then
+				if PartExists(Obj.Name) then 
+					raise Errors.ENameDuplication:format(Obj.Name as String);
+				end;
+				if Obj.Linked != nil then
+					local Ex, Index = MethodExists(Obj.Linked);
+					if not Ex then 
+						raise Errors.ELinkedMethodHasNoEndLink:format(Obj.Name as String, Obj.Linked as String);
+					end;
+					if not HELLua_Class.Class.MethodsEqual(__methods[Index], Obj) then 
+						raise Errors.ELinkedMethodHasInvalidDefinition:format(Obj.Name as String, Obj.Linked as String);
+					end;
+					if __methods[Index].Linked then 
+						raise Errors.ELinkedMethodLinkingPointer:format(Obj.Name as String, Obj.Linked as String);
+					end;
+					local Lnks = __methods[Index].Links;
+					if (Lnks is not Table) then 
+						__methods[Index].Links = {};
+						Lnks = __methods[Index].Links;
+					end;
+					table.insert(Lnks, Obj);
+				end; 
+				table.insert(__methods, Obj);
+			else 
+				raise Errors.EUnknownType:format(Obj.Type as String);
+			end;
+		end;
+	end;
+
+	if not Native then 
+		for k,v in pairs(__properties) do 
+			if v.Native then 
+				Native = true;
+				NativeObj = v;
+				break;
+			end;
+		end;
+	end;
+
+	if InheritedFrom then 
+		__fields = HL.CollideTablesByPropertySafe(ParentedTable.__fields, __fields, 'Name');
+		__properties = HL.CollideTablesByPropertySafe(ParentedTable.__properties, __properties, 'Name');
+		__methods = HL.CollideTablesByPropertySafe(ParentedTable.__methods, __methods, 'Name'); 
+	end;
+
+	local RawClass = {
+		__properties = __properties;
+		__fields = __fields;
+		__methods = __methods;
+		__name = nameOfClass;
+		__parentPointer =  InheritedFrom ? ParentedTable : nil;
+	};
+
+	ClassesTree[nameOfClass] = RawClass;
+
+	local Implementation = {};
+	-- local ImplementationMeta, OldEnv = HL.CreateWithEnvironment(3);
+
+	-- Implementation = setmetatable(Implementation, ImplementationMeta);
+	
+	if (classCast.Implementation is Function) then 
+		-- Implementation
+		with(getfenv(2), function() 
+			with(Implementation, classCast.Implementation);
+		end);
+	end;
+
+	-- Implementation = setmetatable(Implementation, {});
+	
+	local DefinedMethods = HL.DeepCopy(__methods);
+
+	for k,v in pairs(Implementation) do
+		local Found, Index = MethodExists(k);
+		if Found then 
+			if (__methods[Index].Linked != nil) then 
+				raise Errors.ELinkedMethodCannotHaveImplementation:format(k as String);
+			end;
+			if (v is Function) then 
+				DefinedMethods[Index] = nil;
+				__methods[Index].Function = v;
+				__methods[Index].Abstract = false;
+				__methods[Index].Owner = RawClass;
+				if (__methods[Index].Links is Table) then 
+					for iter = 1 to (#__methods[Index].Links) do 
+						__methods[Index].Links[iter].Function = v;
+						__methods[Index].Links[iter].Abstract = false;
+						__methods[Index].Links[iter].Owner = RawClass;
+					end;
+				end;
+			else 
+				raise Errors.EMethodTypeIsViolated:format(k as String, typeof v);
+			end;
+		else 
+			Found, Index = FieldExists(k);
+			if Found then 
+				if __fields[Index].Constant then 
+					raise Errors.ECannotChangeConstantField:format(k as String);
+				end;
+				__fields[Index].Content = v;
+			else
+				if (v is Function) then 
+					raise Errors.EImplementedMethodIsNotDefined:format(k as String);
+				else 
+					raise Errors.EImplementedFieldHasNoDefinition:format(k as String);
+				end; 
+			end;
+		end;
+	end;
+
+	for k,v in pairs(DefinedMethods) do 
+		if (v is Table) then 
+			if (v.Function is Function) or (v.Linked) or (v.Abstract) then 
+				-- print('++$ Cleared ' + k); 
+				DefinedMethods[k] = nil;
+			end;
+		end;
+	end;
+
+	if not HL.TableIsEmpty(DefinedMethods) then 
+		local StrMethods = HL.ConcatByProperty(DefinedMethods, 'Name', ',');
+		StrMethods = '(' + StrMethods + ')';
+		raise Errors.EMethodDefinedIsNotImplemented:format(StrMethods);
+	end;
+
+	local Operators = {};
+
+	for k,v in pairs(__methods) do 
+		if (v.Following) or (v.Virtual) then 
+			v.Owner = RawClass;
+		elseif (v.Operator) then 
+			Operators[v.Name:lower()] = v;
+		end;
+	end;
+
+	--[[
+		ClassConstructionMethod is the only right constructor.
+	]]
+
+	local StaticClassMethods = { };
+	local StaticClassFields = { };
+	local ConstructorsCount = 0;
+
+	for i, meth in pairs(__methods) do 
+		if (__methods[i].Static) and (__methods[i].Visibility == Visibility_Public) then 
+			-- table.insert(StaticClassMethods, __methods[i]);
+			StaticClassMethods[meth.Name] = __methods[i];
+		elseif (__methods[i].Constructor) then 
+			-- table.insert(StaticClassMethods, __methods[i]);
+			StaticClassMethods[meth.Name] = __methods[i];
+			ConstructorsCount += 1;
+		end;
+	end;
+
+	for i, Field in pairs(__fields) do 
+		if Field.Static and (Field.Visibility == Visibility_Public) then 
+			StaticClassFields[Field.Name] = Field;
+		end;
+	end;
+
+	if ConstructorsCount <= 0 then 
+		raise Errors.ENoConstructorsAreDefined;
+	end;
+
+	local EnvirMeta, OldEnvir = HL.CreateWithEnvironment(3);
+	local Envir = { InnerEnvMeta = EnvirMeta; OldInnerEnv = OldEnvir; };
+
+	-- HL.PrintTable(getfenv(2));
+
+	-- HL.PrintTable(OldEnvir.__ENV);
+	-- print(OldEnvir.TObject);
+
+	function StaticClassIndexer(self, index)
+		local i = index;
+		if (StaticClassFields[i] != nil) then 
+			return StaticClassFields[i].Content;
+		end;
+		if (StaticClassMethods[i] != nil) then
+			if not StaticClassMethods[i].Constructor then 
+				local StaticMethod = StaticClassMethods[i];
+				return HL.CreateCallableTable(function(self, ...) return StaticMethod.Function(...); end);
+			else 
+				local ConstructorMethod = StaticClassMethods[i];
+				return HL.CreateCallableTable(function(self, ...)
+					local PClass = ClassConstructionMethod(__fields, __properties, __methods, Envir, RawClass);
+					PClass[index](...);
+					return PClass;
+				end);
+			end;
+		end; 
+	end;
+
+	local ClassPatternForPublicUsage = setmetatable({}, 
+		{ 	__index = StaticClassIndexer; 
+			__newindex = function() raise 'Cannot assign values to static classes.'; end });
+
+	-- return ClassConstructionMethod;
+	return ClassPatternForPublicUsage;
+end;
+
+with HELLua_Class do 
+
+	-- Class = {};
+	
+	with Class do 
+		
+		--[[ Visibility ]]
+		
+		function ReloadClassTree()
+			ClassesTree = {};
+		end;
+
+		function Public(objects)
+			if not (objects is Table) then 
+				raise Errors.EUnexpectedType:format(typeof objects, 'table');
+			end;
+			for ind, object in pairs(objects) do 
+				object.Visibility = Visibility_Public;
+			end;
+			return objects;
+		end;
+		
+		function Protected(objects)
+			if not (objects is Table) then 
+				raise Errors.EUnexpectedType:format(typeof objects, 'table');
+			end;
+			for ind, object in pairs(objects) do 
+				object.Visibility = Visibility_Private;
+			end;
+			return objects;
+		end;
+		
+		function Private(objects)
+			if not (objects is Table) then 
+				raise Errors.EUnexpectedType:format(typeof objects, 'table');
+			end;
+			for ind, object in pairs(objects) do 
+				if (object.Type == Type_Method) and (object.Constructor) then 
+					raise Errors.EConstructorCannotBePrivate:format(object.Name as String);
+				elseif (object.Type == Type_Method) and (object.Operator) then 
+					raise Errors.EOperatorMustBePublic:format(object.Name as String);
+				end;
+				object.Visibility = Visibility_Private;
+			end;
+			return objects;
+		end;
+		
+		--[[ Miscs ]]
+		
+		function Field(FieldObj)
+			local name = FieldObj.Name;
+			local Constant = FieldObj.Constant;
+			local Enclosed = FieldObj.Enclosed;
+			local Static = FieldObj.Static;
+			if (name is not String) then raise Errors.ENameIsInvalid; end;
+			if (Constant is not Boolean) then Constant = false; end;
+			if (Enclosed is not Boolean) then Enclosed = false; end;
+			if (Constant and (FieldObj.Content == nil)) then 
+				raise Errors.EConstantFieldMustHaveValue:format(name as String);
+			end;
+			return 
+				{ Type = Type_Field; 
+					Name = name;
+					Visibility = Visibility_Public;
+					Content = FieldObj.Content;
+					Constant = Constant; 
+					Enclosed = Enclosed;
+					Static = Static };
+		end;
+		
+		function Property(PropObj)
+			if not (PropObj is Table) then 
+				raise Errors.EUnexpectedType:format(typeof PropObj, 'table');
+			end;
+			
+			local PName = PropObj.Name;
+			local PWrite = (PropObj.Write is String) ? PropObj.Write : nil;
+			local PRead = (PropObj.Read is String) ? PropObj.Read : nil;
+			local Enclosed = PropObj.Enclosed;
+			local Indexed = PropObj.Indexed;
+			local Native = PropObj.Native;
+			if (Enclosed is not Boolean) then Enclosed = false; end;
+			if (Indexed is not Boolean) then Indexed = false; end;
+			if (Native is not Boolean) then Native = false; end;
+			
+			if not (PName is String) then raise Errors.EUnexpectedType:format(typeof PName, 'string'); end;
+			if not (PRead or PWrite) then raise Errors.EPropertyIsUnreachable; end;
+			if (Native and not Indexed) then raise Errors.ENativePropertyMustBeIndexed:format(Name as String); end;
+			
+			return 
+				{	Type = Type_Property;
+					Name = PName;
+					Visibility = Visibility_Public;
+					Read = PRead;
+					Write = PWrite;
+					Enclosed = Enclosed;
+					Native = Native;
+					Indexed = Indexed; };
+		end;
+		
+		function Method(MethodObj)
+			local Name = MethodObj.Name;
+			local Static = MethodObj.Static;
+			local Constructor = MethodObj.Constructor;
+			local Virtual = MethodObj.Virtual;
+			local Enclosed = MethodObj.Enclosed;
+			local Abstract = MethodObj.Abstract;
+			local Operator = MethodObj.Operator;
+			if (Name is not String) then raise Error.ENameIsInvalid; end;
+			if (Static is not Boolean) then Static = false; end;
+			if (Constructor is not Boolean) then Constructor = false; end;
+			if (Virtual is not Boolean) then Virtual = false; end;
+			if (Enclosed is not Boolean) then Enclosed = false; end;
+			if (Abstract is not Boolean) then Abstract = false; end;
+			if (Operator is not Boolean) then Operator = false; end;
+
+			if Static and Constructor then raise Errors.EConstructorCannotBeStatic:format(Name); end;
+			if Static and Virtual then raise Errors.EStaticMethodCannotBeVirtual:format(Name); end;
+			if Abstract and not Virtual then raise Errors.EAbstractMethodMustBeVirtual:format(Name); end;
+			if Constructor and Abstract then raise Errors.EConstructorCannotBeAbstract:format(Name); end;
+			if Constructor and Enclosed then raise Errors.EConstructorCannotBeEnclosed:format(Name); end;
+			if Operator and (Constructor or Virtual or Abstract or Enclosed) then raise Errors.EOperatorCannotBeModified:format(Name); end;
+			if Operator and not Static then raise Errors.EOperatorMustBeStatic:format(Name); end;
+
+			return 
+				{	Type = Type_Method;
+					Name = Name;
+					Static = Static;
+					Constructor = Constructor;
+					Linked = ((MethodObj.Linked) is String) ? MethodObj.Linked : nil;
+					Enclosed = Enclosed;
+					Abstract = Abstract;
+					Operator = Operator;
+					Virtual = Virtual };
+		end;
+
+		function MethodsEqual(MethodFirst, MethodSecond)
+			local M = MethodFirst;
+			local N = MethodSecond;
+			return 
+				(M.Static == N.Static) and 
+				(M.Constructor == N.Constructor) and 
+				(M.Virtual == N.Virtual) and 
+				(M.Abstract == N.Abstract) and 
+				(M.Enclosed == N.Enclosed);
+		end;
+		
+		--[[ Main ]]
+
+		function ArrayToTable(Array, Prop)
+			for i = 1 to #Array do 
+				Array[Array[i][Prop]] = Array[i];
+				Array[i] = nil;
+			end;
+			return Array;
+		end;
+
+	end;
+
+end;
+
+return HELLua_Class;

@@ -1,0 +1,142 @@
+--[[ Sample script in HELLua ]]
+
+uses 
+	math, 
+	debug;
+
+assemble	
+	HELLua.lua as HL;
+
+local PathOut = 'Processed';
+	
+-- Init
+
+_G.Try = HL.Try;
+_G.with = HL.with;
+_G.strictly_with = HL.strictly_with;
+	
+-- Bit module loader
+
+local bit = nil;
+try
+	global uses bit;
+except on E do 
+	try 
+		global uses bit32 as bit;
+	except on E1 do
+		-- Throw and raise are the same.
+		throw 'No bit module is found.';
+	end;
+end;
+
+-- Main module 
+
+local Module = {
+	LogFunction = print;
+};
+
+local ClearMsgs = false;
+local VoidOutput = true;
+
+local Msg_HeaderInitial = '[HELLua_Builder]';
+local Msg_ExtensionChanged = Msg_HeaderInitial + '[Hint]: Extension has been changed: %s -> %s';
+
+with Module do 
+
+	function Log(Msg, ...)
+		LogFunction(Msg:format(...));
+	end;
+	
+	local L = Log;
+
+	function FixPath(path)
+		path = path:gsub('^[%s/\\]+', ''):gsub('[%s/\\]+$', '');
+		return path:gsub('/', '\\');
+	end;
+
+	function GetDirs(path)
+		path = FixPath(path);
+		local LastPos = 1;
+		local Result = {};
+		local PS, PF = path:find('\\');
+		while (PS != nil) do 
+			table.insert(Result, path:sub(LastPos, PF - 1));
+			LastPos = PF + 1;
+			PS, PF = path:find('\\', PF + 1);
+		end;
+		return Result, path:sub(LastPos);
+	end;
+
+	function BuildFile(From, To)
+		From = (From is string) ? From : (From as string);
+		if not (To is string) then 
+			local PS, PF, extension = (From as string):find('%.(.-)$');
+			if (PS != nil) and (PS != 1) then 
+				To = From:sub(1, PS - 1) + '.lua';
+				Log(Msg_ExtensionChanged, extension, '.lua');
+			end;
+		end;
+		return From, To;
+	end;
+	
+	function Header()
+		L 'HELLua Builder. Copyright (c) Hunter200165, 2018';
+		L '';
+	end;
+	
+	function Help()
+		L 'Help for HELLua Builder:';
+		L '  HELLua_Builder.lua <File in> [File out [Special settings]]'
+	end;
+	
+	function ClearScr()
+		os.execute 'cls';
+	end;
+	
+	function FolderExists(Name)
+		L ('** Scanning for folder existance: %s', Name);
+		local res = os.execute('dir ' + Name + (VoidOutput ? (' > NUL') : ('')));
+		L ('** Scanned: %s \n', res as String);
+		if ClearMsgs then ClearScr(); end;
+		return (res == 0);
+	end;
+	
+	function CreateFolder(Name)
+		L ('** Trying to create folder: %s', Name);
+		local res = os.execute('mkdir ' + Name + (VoidOutput ? (' > NUL') : ('')));
+		L ('** Tried: %s', res as String);
+		if ClearMsgs then ClearScr(); end;
+		return (res == 0);
+	end;
+	
+	function Main(Args)
+		if not ClearMsgs then Header(); end; 
+		if not ((Args[1]) is string) then 
+			Help();
+			return;
+		end;
+		local From, To = BuildFile(Args[1], Args[2], Args[3]);
+		local Path, Name = GetDirs(To);
+		local PathStr = table.concat(Path, '\\');
+		if not FolderExists(FixPath(PathStr + '\\' + PathOut)) then 
+			if not CreateFolder(FixPath(PathStr + '\\' + PathOut)) then 
+				raise 'Cannot create out folder [' + FixPath(PathStr + '\\' + PathOut) + '].';
+			end;
+		end;
+		if ClearMsgs then Header(); end;
+		To = FixPath(PathStr + '\\' + PathOut + '\\' + Name);
+		From = FixPath(From); 
+		L('Building file (%s -> %s)', From as string, To as string);
+		HL.HMachine:BuildFile(From, To, (Args[3] != 'false') ? true : false);
+		L 'Done.';
+	end;
+	
+end;
+
+-- 1 = In File
+-- 2 = Out File
+-- 3 = Also some settings
+
+local Args = {...};
+Module.Main(Args);
+

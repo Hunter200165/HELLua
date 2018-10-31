@@ -1,0 +1,708 @@
+-- Classes library for HELLua (and Lua) Applications
+
+uses 
+    HELLua_API as HL, 
+    HELLua_ClassAPI as HLC, 
+    bit;
+
+local LocalEnv = {};
+local Lib = {};
+
+import '.*' from HLC.Class to LocalEnv;
+
+with LocalEnv do 
+    with Lib do 
+
+        -- First, main and root class TObject. Please, inherit your classes from it.
+        TObject = 
+            class TObject do 
+
+                public method GetClassName;
+                public method GetParentName;
+
+                public property ClassName read GetClassName;
+                public property ClassParent read GetParentName;
+
+                public method InheritsFrom;
+
+                protected field FCreatedObject, constant, enclosed, default true;
+                public property CreatedObject read FCreatedObject, enclosed;
+
+                -- Constructors are public by default.
+                public constructor Create;
+                public constructor New;
+
+            implementation
+
+                -- FCreatedObject = false;
+
+                function GetClassName()
+                    return ____selfTopClass.__name;
+                end;
+
+                function GetParentName()
+                    local Parent = ____selfTopClass.__parentPointer;
+                    if (Parent != nil) then 
+                        return Parent.__name;
+                    else 
+                        return nil;
+                    end;
+                end;
+
+                function InheritsFrom(ClsName)
+                    if (ClsName is not String) then return false; end;
+                    local ClassInstance = ____selfTopClass;
+                    while (ClassInstance != nil) do 
+                        if ClassInstance.__name == ClsName then 
+                            return true;
+                        end;
+                        ClassInstance = ClassInstance.__parentPointer;
+                    end;
+                    return false;
+                end;
+
+                -- Constructors!
+
+                function Create()
+                    -- It is empty.
+                end;
+
+                function New()
+                    Create();
+                end;
+
+            end;
+
+        TException = 
+            class TException inherits from TObject do 
+
+                protected method Construct;
+
+                public constructor Create;
+                public constructor New, linked with Create;
+
+                protected field FMessage;
+                public property Message read FMessage;
+
+                public method Raise, abstract, virtual;
+                public method Throw, abstract, virtual;
+
+            implementation
+
+                FMessage = 'Unknown exception.';
+
+                function Construct(str)
+                    if (str is String) then 
+                        FMessage = str;
+                    end; 
+                end;
+
+                function Create(str)
+                    Construct(str);
+                end;
+
+            end;
+
+        TFormattedException = 
+            class TFormattedException inherits from TException do 
+
+                public constructor Create;
+                public constructor New, linked with Create;
+
+            implementation
+
+                function Create(Msg, ...)
+                    Construct(Msg:format(...));
+                end;
+
+            end;
+
+        EFileException = class EFileException inherits from TFormattedException do end;
+
+        _G.RawType = _G.type;
+        _G.RawError = _G.error;
+        _G.RawToString = _G.tostring;
+        _G.RawToNumber = _G.tonumber;
+        bit.RawBand = bit.band;
+        bit.RawBor = bit.bor;
+        bit.RawBxor = bit.bxor;
+        bit.RawBnot = bit.bnot;
+        bit.RawLShift = bit.lshift;
+        bit.RawRShift = bit.rshift;
+
+        _G.type = function(Var)
+            local Typ = RawType(Var);
+            if (Typ == 'table') and (Var.CreatedObject) then 
+                return 'object';
+            end; 
+            return Typ;
+        end;
+
+        _G.tostring = function(Var)
+            local Typ = typeof Var;
+            if (Typ == 'object') then 
+                if (Var.ToString raw is Function) then 
+                    return Var.ToString();
+                end;
+                return 'object: ' + HL.ExtractTablePointer(RawToString(Var));
+            end; 
+            return RawToString(Var);
+        end;
+
+        local ExceptionMask = '[%s]: %s';
+
+        _G.error = function(Msg, Level)
+            if (Msg is Object<TException>) then 
+                _G.RawError(ExceptionMask:format(Msg.ClassName, Msg.Message), 1 + (Level as Number) ? Level : 0);
+            else 
+                _G.RawError(Msg, ((Level as Number) ? Level : 0) + 1);
+            end;
+        end;
+
+        _G.tonumber = function(Var, Base)
+            -- local Typ = typeof Var;
+            if (Var raw is Table) and (Var.ToNumber raw is Function) then 
+                return Var.ToNumber(Base);
+            end;
+            return RawToNumber(Var, Base);
+        end;
+
+        local CreateBitFunc = 
+            function(Name, Func)
+                return function(Op1, Op2, ...)
+                    if (Op1 raw is Table) and (Op1[Name] raw is Function) then return Op1[Name](Op1, Op2); end;
+                    if (Op2 raw is Table) and (Op2[Name] raw is Function) then return Op2[Name](Op1, Op2); end;
+                    return Func(Op1, Op2, ...);
+                end;
+            end;
+
+        bit.band = CreateBitFunc('OperatorBitwiseAnd', bit.RawBand);
+        bit.bor = CreateBitFunc('OperatorBitwiseOr', bit.RawBor);
+        bit.bxor = CreateBitFunc('OperatorBitwiseXor', bit.RawBxor);
+        bit.lshift = CreateBitFunc('OperatorBitwiseShiftLeft', bit.RawLShift);
+        bit.rshift = CreateBitFunc('OperatorBitwiseShiftRight', bit.RawRShift);
+        bit.bnot = function(Op1) 
+            if (Op1 raw is Table) and (Op1.OperatorBitwiseNot raw is Function) then  
+                return Op1.OperatorBitwiseNot(Op1);
+            end;
+            return bit.RawBnot(Op1);
+        end;
+
+        TString =
+            class TString inherits from TObject do 
+
+                public method ConcatenateStrings, static;
+                public method GetChar, static;
+
+                public method New, static;
+
+            implementation
+
+                function ConcatenateStrings(str1, str2)
+                    return str1 + str2;
+                end;
+
+                function GetChar(str, index)
+                    return str:gsub(index, index);
+                end;
+
+                function New(Obj)
+                    if (Obj is Nil) then 
+                        return '';
+                    elseif (Obj is Table) and (Obj.ToString is Function) then 
+                        return Obj.ToString();
+                    else 
+                        return tostring(Obj);
+                    end;
+                end;
+
+            end;
+
+        TTable = 
+            class TTable inherits from TObject do 
+
+                public method Join, static;
+                public method Insert, static;
+                public method Delete, static;
+                public method Length, static;
+
+                public method New, static;
+
+                public method Print, static;
+
+            implementation
+
+                function New(...)
+                    local Args = {...};
+                    if #Args <= 0 then 
+                        return {};
+                    else 
+                        return {unpack(Args)};
+                    end;
+                end;
+
+                function Join(...)
+                    local Args = {...};
+                    local Result = {};
+                    for i = 1 to #Args do 
+                        for k,v in pairs(Args[i]) do 
+                            Result[k] = v;
+                        end;
+                    end;
+                    return Result;
+                end;
+
+                function Length(Dict)
+                    return #Dict;
+                end;
+
+                function Insert(Dict, Item, Position)
+                    Position = (Position is not Number) and (#Dict + 1) or Position;
+                    local Len = #Dict;
+                    if Position > Len then 
+                        Dict[Position] = Item;
+                        return Position;
+                    else 
+                        for i = #Dict downto Position do 
+                            Dict[i + 1] = Dict[i];
+                        end; 
+                        Dict[Position] = Item;
+                        return Position;
+                    end;
+                end;
+
+                function Delete(Dict, Position)
+                    Position = (Position is not Number) and (#Dict) or Position;
+                    local Len = #Dict;
+                    if Position >= Len then 
+                        Dict[Position] = nil;
+                    else
+                        for i = Position to #Dict do 
+                            Dict[i] = Dict[i + 1];
+                        end; 
+                    end;
+                end;
+
+                function Print(Op1, Name)
+                    print (((Name is String) ? Name : ('unnamed table')) + ' = {');
+                    for k,v in pairs(Op1) do 
+                        print(('  %s = %s;'):format(k as String, v as String));
+                    end;
+                    print '};';
+                end;
+
+            end;
+
+        TNumber = 
+            class TNumber inherits from TObject do 
+
+                protected field FContent, default 0;
+                protected method SetContent;
+
+                public property Content read FContent write SetContent;
+
+                public constructor Create;
+                public constructor New, linked with Create;
+
+                public method ToString;
+                public method ToNumber;
+                public method Print;
+
+                public method OperatorAdd, static, operator;
+                public method OperatorMultiply, static, operator;
+
+                public method OperatorBitwiseAnd, static, operator;
+                public method OperatorBitwiseOr, static, operator;
+                public method OperatorBitwiseNot, static, operator;
+
+            implementation
+
+                -- print(TObject);
+
+                function ToString()
+                    return tostring(self.FContent);
+                end;
+
+                function ToNumber()
+                    return FContent;
+                end;
+
+                function Print()
+                    -- print('Self: ' + self); 
+                    print(FContent);
+                end;
+
+                function SetContent(Value)
+                    local A = Value as Number;
+                    if A == nil then 
+                    else
+                        self.FContent = A; 
+                    end;
+                end;
+
+                function Create(Value)
+                    if Value != nil then 
+                        self.SetContent(Value);
+                    end;
+                end;
+
+                function OperatorAdd(Op1, Op2)
+                    if not (Op1 is Object<TNumber>) then Op1 = TNumber.Create(Op1); end;
+                    if not (Op2 is Object<TNumber>) then Op2 = TNumber.Create(Op2); end;
+                    return TNumber.Create(Op1.Content + Op2.Content);
+                end;
+
+                function OperatorMultiply(Op1, Op2)
+                    if not (Op1 is Object<TNumber>) then Op1 = TNumber.Create(Op1); end;
+                    if not (Op2 is Object<TNumber>) then Op2 = TNumber.Create(Op2); end;
+                    return TNumber.Create(Op1.Content * Op2.Content);
+                end;
+
+                function OperatorBitwiseAnd(Op1, Op2)
+                    if (Op1 is Object<TNumber>) then 
+                        return Op1.Content band Op2;
+                    else 
+                        return Op2.Content band Op1;
+                    end;
+                end;
+
+                function OperatorBitwiseOr(Op1, Op2)
+                    if (Op1 is Object<TNumber>) then 
+                        return Op1.Content bor Op2;
+                    else 
+                        return Op2.Content bor Op1;
+                    end;
+                end;
+
+                function OperatorBitwiseNot(Op1)
+                    return bnot Op1.Content;
+                end;
+
+            end;
+
+        TStopWatch = 
+            class TStopWatch inherits from TObject do 
+
+                protected field FStartTime, default 0;
+                protected field FStopTime, default 0;
+
+                protected field FStarted, default false;
+                public property Started read FStarted;
+                public property Stopped read FStopTime;
+
+                public method GetCurrentInterval;
+                protected method GetTime;
+                public property Time read GetTime;
+
+                public method Start;
+                public method Stop;
+
+                public constructor Create;
+                public constructor New, linked with Create;
+
+            implementation
+
+                function Start()
+                    if FStarted then raise 'Already started!'; end;
+                    FStartTime = os.clock() * 1000;
+                    FStarted = true;
+                end;
+
+                function Stop()
+                    if not FStarted then raise 'Not started!'; end;
+                    FStarted = false;
+                    FStopTime = os.clock() * 1000;
+                    return GetTime();
+                end;
+
+                function GetTime()
+                    return FStopTime - FStartTime;
+                end;
+
+                function GetCurrentInterval()
+                    return os.clock() * 1000 - FStartTime;
+                end;
+
+                function Create(ShouldStart)
+                    if (ShouldStart is Boolean) and ShouldStart then 
+                        Start();
+                    end;
+                end;
+
+            end;
+
+        TCallback = 
+            class TCallback inherits from TObject do 
+
+                protected field FCallbacks;
+                public property Callbacks read FCallbacks;
+
+                public method RaiseEvents;
+                public method AddEvent;
+                public method OperatorAdd, static, operator;
+
+            implementation
+
+                FCallbacks = {};
+
+                function RaiseEvents(...)
+                    for i = 1 to #FCallbacks do 
+                        FCallbacks[i](...);
+                    end;
+                end;
+
+                function AddEvent(Event)
+                    return TTable.Insert(FCallbacks, Event);
+                end;
+
+                function OperatorAdd(Op1, Op2)
+                    if (Op1 raw is Function) then 
+                        Op2.AddEvent(Op1);
+                        return Op2; 
+                    end;
+                    if (Op2 raw is Function) then 
+                        Op1.AddEvent(Op2);
+                        return Op1; 
+                    end;
+                    raise 'Only function type can be added to TCallback class.';
+                end;
+
+            end;
+
+        TInputOutput = 
+            class TInputOutput inherits from TObject do 
+
+                public method WriteLn, abstract, virtual;
+                public method Write, abstract, virtual;
+                public method ReadLn, abstract, virtual;
+
+                protected field FOnWrite;
+                protected field FOnWriteLn;
+                protected field FOnReadLn;
+
+                public property OnWrite read FOnWrite write FOnWrite;
+                public property OnWriteLn read FOnWriteLn write FOnWriteLn;
+                public property OnReadLn read FOnReadLn write FOnReadLn;
+
+                public method OperatorBitwiseShiftLeft;
+                public method OperatorBitwiseShiftRight; 
+
+                protected field PrintF;
+                protected field WriteF;
+                protected field ReadF;
+                protected field CloseF;
+                protected field FlushF;
+                protected field OpenF;
+
+                public constructor Create;
+                public constructor New, linked with Create;
+
+            implementation
+
+                PrintF = print;
+                WriteF = io.write;
+                ReadF = io.read;
+                CloseF = io.close;
+                FlushF = io.flush;
+                OpenF = io.open;
+
+                function OperatorBitwiseShiftLeft(OprndF, OprndS)
+                    if OprndF is Object<TInputOutput> then OprndF.Write(OprndS); end;
+                    if OprndS is Object<TInputOutput> then return OprndS.ReadLn(OprndF); end;
+                    return OprndF;
+                end;
+
+                function OperatorBitwiseShiftRight(OpF, OpS)
+                    if OpF is Object<TInputOutput> then return OpF.ReadLn(OpS); end;
+                    if OpS is Object<TInputOutput> then OpS.Write(OpF); end;
+                    return OpS;
+                end;
+
+                function Create()
+                    FOnWrite = new TCallback();
+                    FOnWriteLn = new TCallback();
+                    FOnReadLn = new TCallback();
+                end;
+
+            end;
+
+        TConsole =
+            class TConsole inherits from TInputOutput do 
+
+                public method WriteLn, virtual;
+                public method Write, virtual;
+                public method ReadLn, virtual;
+
+            implementation
+
+                function WriteLn(...)
+                    FOnWriteLn.RaiseEvents(...);
+                    PrintF(...);
+                end;
+
+                function Write(...)
+                    FOnWrite.RaiseEvents(...);
+                    WriteF(...);
+                end;
+
+                function ReadLn(...)
+                    local Result = {io.read(...)};
+                    FOnReadLn.RaiseEvents(unpack(Result));
+                    return unpack(Result);
+                end;
+
+            end;
+
+        fmOpenWrite = 1;
+        fmOpenRead  = 2;
+        fmOpenAppend = 4;
+        fmOpenReadWrite = fmOpenWrite bor fmOpenRead;
+        fmOpenWriteAdvanced = fmOpenWrite bor 128;
+        fmOpenReadAdvanced  = fmOpenRead bor 128;
+        fmOpenAppendAdvanced = fmOpenAppend bor 128;
+
+        TFile = 
+            class TFile inherits from TInputOutput do 
+
+                public field FFile; --: userdata
+                protected field FMode; --: String
+                public property FileOpened read FFile write FFile;
+                public property Mode read FMode;
+
+                public method WriteLn, virtual;
+                public method Write, virtual;
+                public method ReadLn, virtual;
+
+                public method Flush, virtual;
+
+                protected method CheckOpened, virtual;
+
+                protected field FClosed, default true;
+                public property Closed read FClosed;
+
+                public method Close, virtual;
+                public method Seek, virtual;
+                public method SetPosition, virtual;
+                public method SetPositionFromStart, virtual;
+
+                public property Position read Seek write SetPositionFromStart;
+
+                public constructor Create;
+                public constructor New, linked with Create;
+
+            implementation
+
+                FMode = '';
+
+                function Create(FileName, FileMode)
+                    if (FileMode raw is not Number) then raise EFileException.Create('File mode type is not valid. Expected Number.'); end;
+                    if (FileName raw is not String) then raise EFileException.Create('File name type is not valid. Expected String.'); end;
+                    if FileMode == fmOpenWrite then FMode = 'w';
+                    elseif FileMode == fmOpenAppend then FMode = 'a';
+                    elseif FileMode == fmOpenRead then FMode = 'r';
+                    elseif FileMode == fmOpenWriteAdvanced then FMode = 'w+';
+                    elseif FileMode == fmOpenAppendAdvanced then FMode = 'a+';
+                    elseif FileMode == fmOpenReadAdvanced then FMode = 'r+';
+                    elseif FileMode == fmOpenReadWrite then FMode = 'wr';
+                    else
+                        raise EFileException.Create('File mode is not valid: %s', FileMode as String); 
+                    end;
+                    local File, Msg = OpenF(FileName, FMode);
+                    if File is not Userdata then 
+                        raise EFileException.Create('Cannot open file "%s": %s', FileName as String, Msg as String);
+                    end;
+                    FFile = File;
+                    FClosed = false;
+                    --[[ Do inherited ]]
+                    FOnWrite = new TCallback();
+                    FOnWriteLn = new TCallback();
+                    FOnReadLn = new TCallback();
+                end;
+
+                function CheckOpened()
+                    if Closed then 
+                        raise EFileException.Create('Attempt to work with closed file.');
+                    end;
+                end;
+
+                function WriteLn(...)
+                    CheckOpened();
+                    FOnWriteLn.RaiseEvents(...); 
+                    local Arr = {...};
+                    for i = 1, #Arr do Arr[i] = Arr[i] as String; end;
+                    return FFile:write(table.concat(Arr), '\n');
+                end;
+
+                function Write(...)
+                    CheckOpened();
+                    FOnWrite.RaiseEvents(...); 
+                    local Arr = {...};
+                    for i = 1, #Arr do Arr[i] = Arr[i] as String; end;
+                    return FFile:write(table.concat(Arr));
+                end;
+
+                function ReadLn(...)
+                    CheckOpened();
+                    local Result = {FFile:read(...)};
+                    FOnReadLn.RaiseEvents(unpack(Result));
+                    return unpack(Result);
+                end;
+
+                function Close()
+                    CheckOpened();
+                    FClosed = true;
+                    FFile:close();
+                    FFile = nil;
+                end;
+
+                function Flush()
+                    CheckOpened();
+                    FFile:flush();
+                end;
+
+                function Seek()
+                    CheckOpened();
+                    return FFile:seek();
+                end;
+
+                function SetPosition(...)
+                    CheckOpened();
+                    return FFile:seek(...);
+                end;
+
+                function SetPositionFromStart(pos)
+                    return SetPosition('set', pos);
+                end;
+
+            end;
+
+        TGarbageCollector = 
+            class TGarbageCollector inherits from TObject do 
+
+                public method Collect;
+                public method GetRAMUsage;
+
+                protected field CollectGarbageF;
+
+            implementation
+
+                CollectGarbageF = collectgarbage;
+
+                function GetRAMUsage()
+                    -- Returns in Bytes
+                    return CollectGarbageF('count') * 1024;
+                end;
+
+                function Collect()
+                    local Old = GetRAMUsage();
+                    CollectGarbageF 'collect';
+                    local New = GetRAMUsage();
+                    return Old - New;
+                end;
+
+            end;
+
+    end;
+end;
+
+return Lib;

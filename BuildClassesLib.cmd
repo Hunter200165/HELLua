@@ -1,0 +1,2 @@
+HELLua_Builder_JITed.lua HELLua_ClassesLib.hlua
+pause
