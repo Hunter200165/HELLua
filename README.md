@@ -1,4 +1,4 @@
-# HELLua ![](https://cdn.discordapp.com/emojis/490042668018040832.png?v=1)
+# ![](https://cdn.discordapp.com/emojis/490042668018040832.png?v=1) HELLua
 HELLua - Hunter's Enhanced Lexeme Lua compiler - is new programming language based and written in pure Lua. Initially it was supposed to be a set of smart macros for Lua, but as number of macros grew up and new operators were added, this idea became programming language itself. 
 HELLua has a compiler, written in pure Lua, that allows you to use macros in your code and very big amount of syntactic sugar. Firstly, all HELLua sources are compiled to Lua sources, and then it can be executed on every Lua interpreter.
 
